@@ -1,0 +1,147 @@
+---
+title: "Covid19_Data_Analysis"
+date: "2024-10-10"
+output: pdf_document
+---
+# Introduction
+
+The following data sets used in this report were obtained by John Hopkins University and can be uploaded from the following github url: https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series
+
+Each dataset or csv file contains a timeline of covid-19 cases and covid-19 deaths from January 22nd, 2020 to March 9th, 2023.  
+
+In this analysis I downloaded edited and combined the global cases and global death datasets.
+
+In this data analysis we aim to explore the differences in covid-19 cases vs. deaths in countries around the world. We also aimed to determine if total death counts decreased after most people had obtained their first immunization (roughly July 2021).
+
+Finally we review potential biases at the end of the analysis. 
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+warning = FALSE
+library(tidyverse)
+library(lubridate)
+
+urls <- c("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv", "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv", "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv", "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv")
+
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+
+```
+
+```{R Tidy Global Data, error= TRUE}
+tidy_global_cases <- global_cases %>%
+  pivot_longer(
+    cols = -c("Province/State", "Country/Region", "Lat", "Long"),  
+    names_to = "Date", 
+    values_to = "Cases") %>%
+    select(-c("Lat", "Long"))
+
+tidy_global_deaths <- global_deaths %>%
+  pivot_longer(
+    cols = -c("Province/State", "Country/Region", "Lat", "Long"),
+    names_to = "Date",
+    values_to = "Deaths") %>%
+    select(-c("Lat", "Long"))
+
+tidy_global_cases <- tidy_global_cases %>%
+  mutate(Date = as.Date(Date, format = "%m/%d/%y"))
+
+tidy_global_deaths <- tidy_global_deaths %>%
+  mutate(Date = as.Date(Date, format = "%m/%d/%y"))
+
+# Now join the two datasets on Province/State, Country/Region, and Date
+global_combined <- full_join(tidy_global_cases, tidy_global_deaths, 
+                             by = c("Province/State", "Country/Region", "Date"))
+
+global_combined_clean <- global_combined %>%
+  filter(!is.na(Cases) | !is.na(Deaths))
+global_combined_clean
+
+summary(global_combined)
+
+
+range(global_combined_clean$Date)
+count("Country/Region")
+```
+
+
+```{R Visualizations}
+
+us_data <- global_combined_clean %>%
+  filter(`Country/Region` == "US")
+
+# Filter for Mexico data
+mexico_data <- global_combined_clean %>%
+  filter(`Country/Region` == "Mexico")
+
+ggplot(us_data, aes(x = Date)) +
+  geom_line(aes(y = Cases, color = "Cases"), size = 1) +
+  geom_line(aes(y = Deaths, color = "Deaths"), size = 1) +
+  labs(title = "COVID-19 Cases and Deaths Over Time in the US",
+       x = "Date", y = "Count") +
+  scale_color_manual("", values = c("Cases" = "blue", "Deaths" = "red")) +
+  theme_minimal()
+
+
+ggplot(mexico_data, aes(x = Date)) +
+  geom_line(aes(y = Cases, color = "Cases"), size = 1) +
+  geom_line(aes(y = Deaths, color = "Deaths"), size = 1) +
+  labs(title = "COVID-19 Cases and Deaths Over Time in Mexico",
+       x = "Date", y = "Count") +
+  scale_color_manual("", values = c("Cases" = "blue", "Deaths" = "red")) +
+  theme_minimal()
+
+```
+
+# Visualization Analysis 
+
+Based off of the two line graphs above, Mexico appears to have a greater amount of deaths compared to the US over the span between 2021 to 2023. However, on the graphs above are representative of different log values so we need to adjust our graphs before making further conclusions. 
+
+```{R Visualizations 2}
+ggplot(us_data, aes(x = Date)) +
+  geom_line(aes(y = Cases, color = "Cases"), size = 1) +
+  geom_line(aes(y = Deaths, color = "Deaths"), size = 1) +
+  labs(title = "COVID-19 Cases and Deaths Over Time in the US (Log Scale)",
+       x = "Date", y = "Count (Log Scale)") +
+  scale_color_manual("", values = c("Cases" = "blue", "Deaths" = "red")) +
+  scale_y_log10(limits = c(1, 6e7)) +  # Log scale with limit set to 6E7
+  theme_minimal()
+
+
+ggplot(mexico_data, aes(x = Date)) +
+  geom_line(aes(y = Cases, color = "Cases"), size = 1) +
+  geom_line(aes(y = Deaths, color = "Deaths"), size = 1) +
+  labs(title = "COVID-19 Cases and Deaths Over Time in Mexico (Log Scale)",
+       x = "Date", y = "Count (Log Scale)") +
+  scale_color_manual("", values = c("Cases" = "blue", "Deaths" = "red")) +
+  scale_y_log10(limits = c(1, 6e7)) +  # Log scale with limit set to 6E7
+  theme_minimal()
+```
+
+# Visualization Analysis 2
+
+In the two line graphs above, it now appears that the US had more COVID-19 related deaths compared to Mexico between 2021 to 2023. However, there are many factors that can go into data collection that can ultimately change this outcome.
+
+```{R Models}
+
+global_combined_clean <- global_combined_clean %>%
+  mutate(Date_numeric = as.numeric(Date))
+
+global_combined_clean <- global_combined_clean %>%
+  arrange('Country/Region', 'Date') %>%
+  group_by(`Country/Region`) %>%
+  mutate(Cases_lagged = lag(Cases, n = 7))  # Lag cases by 7 days
+
+model_with_lag <- glm(Deaths ~ Cases_lagged + Date_numeric, data = global_combined_clean)
+summary(model_with_lag)
+
+summary(model_with_lag)
+
+```
+The generalized model above aims to determine if deaths follow case outbreaks with a delay. I cleaned the data so that the lag in cases was by 7 days, and then wrote a model to determine if it was statistically significant. Based on the summary we can conclude that death counts do increase roughly 7 days after spikes in cases. 
+
+# Conclusion
+
+Based off of our first four graphs it appears that the US had more deaths and cases than Mexico. Although this could be possible, there are many factors that may have influenced this data. For example, peoples access to testing centers, hospitals, their current financial situations, and their ability to take off work to get tested/ treated. Although there are healthcare deserts in the US it is likely that there are more impoverished regions in Mexico that would ultimately limit peoples access to testing centers and healthcare facilities. This shows the need for data scientists to explain shortcomings in their data so false conclusions are not made and. 
+
+
